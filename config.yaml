@@ -1,0 +1,36 @@
+search:
+  keywords:
+    - "MERN Stack Developer Fresher"
+    - "React Developer 0-1 Years"
+    - "Junior React Developer"
+    - "Entry Level Full Stack Developer"
+    - "Junior MERN Developer"
+    - "React Node Fresher"
+    - "Junior Frontend Developer React"
+    - "Junior Node.js Developer"
+  locations:
+    - "Remote"
+    - "Hyderabad"
+    - "Bangalore"
+    - "Visakhapatnam"
+  experience_range: "0-1"
+  results_per_keyword: 25
+
+matching:
+  relevance_threshold: 7
+  groq_model: "llama-3.1-8b-instant"
+  ollama_model: "qwen3:8b"
+  use_ollama: false
+  max_experience_years: 1
+
+scraping:
+  interval_hours: 2
+  hours_old: 24
+  delay_between_requests: 3
+
+storage:
+  db_path: "jobs.db"
+  excel_path: "jobs_output.xlsx"
+
+resume:
+  path: "resume/KumarNaidu_FullStack_Resume.pdf"

@@ -1,0 +1,68 @@
+
+[2026-07-01 10:34:32.748272]
+  SENIOR SLIPPAGE (7 jobs): Lead Full stack Engineer - Azure @ Solugenix (score=8) | Senior Software Engineer – Full Stack (Frontend Focus) Commerce Team, Hyderabad @ Warner Bros. Discovery (score=9) | Sr Engineer, Software - Full Stack [T500-27159] @ TMUS Global Solutions (score=9)
+  EXP SLIPPAGE (2 jobs): .Net+React JS Developer @ Infosys (score=7) — «ng\-\>react JS * 2\-3 yrs of relevant experience * Must have design » | Full Stack Software Developer – Node.js & React (Bulgaria based) @ Sutherland (score=9) — «ustomers. With over 35 years of experience, we combine deep do»
+
+[2026-07-01 10:37:50.445961]
+  SENIOR SLIPPAGE (9 jobs): Senior Backend Developer (Node.js | AI-Native Developer) @  (score=7) | Lead Full stack Engineer - Azure @ Solugenix (score=8) | Senior Software Engineer – Full Stack (Frontend Focus) Commerce Team, Hyderabad @ Warner Bros. Discovery (score=9)
+  EXP SLIPPAGE (2 jobs): .Net+React JS Developer @ Infosys (score=7) -- [ng\-\>react JS * 2\-3 yrs of relevant experience * Must have design ] | Junior Software Engineer @ nan (score=8) -- [ndidates with up to 5 years of experience are welcome to appl]
+  NO-DESCRIPTION HIGH SCORE: 27 matched jobs have no description (exp unknown)
+
+[2026-07-01 10:42:10.989439]
+  SENIOR SLIPPAGE (9 jobs): Senior Backend Developer (Node.js | AI-Native Developer) @  (score=7) | Lead Full stack Engineer - Azure @ Solugenix (score=8) | Senior Software Engineer – Full Stack (Frontend Focus) Commerce Team, Hyderabad @ Warner Bros. Discovery (score=9)
+  EXP SLIPPAGE (1 jobs): .Net+React JS Developer @ Infosys (score=7) -- [>react JS * 2\-3 yrs of relevant experience * Must have design exper]
+  NO-DESCRIPTION HIGH SCORE: 27 matched jobs have no description (exp unknown)
+
+[2026-07-01 10:43:17.332220]
+  EXP SLIPPAGE (1 jobs): .Net+React JS Developer @ Infosys (score=7) -- [>react JS * 2\-3 yrs of relevant experience * Must have design exper]
+
+[2026-07-01 10:45:34.966581]
+  EXP SLIPPAGE (1 jobs): .Net+React JS Developer @ Infosys (score=7) -- [>react JS * 2\-3 yrs of relevant experience * Must have design exper]
+
+[2026-07-01 11:23:55.796849]
+  EXP SLIPPAGE (1 jobs): .Net+React JS Developer @ Infosys (score=7) -- [>react JS * 2\-3 yrs of relevant experience * Must have design exper]
+
+[2026-07-01 23:15:10.803572]
+  NO-DESCRIPTION HIGH SCORE: 47 matched jobs have no description (exp unknown)
+
+[2026-07-01 23:47:10.940158]
+  NO-DESCRIPTION HIGH SCORE: 22 matched jobs have no description (exp unknown)
+
+[2026-07-02 00:19:10.676787]
+  NO-DESCRIPTION HIGH SCORE: 21 matched jobs have no description (exp unknown)
+
+[2026-07-02 00:43:26.118903]
+  NO-DESCRIPTION HIGH SCORE: 21 matched jobs have no description (exp unknown)
+
+[2026-07-02 00:50:07.988455]
+  NO-DESCRIPTION HIGH SCORE: 21 matched jobs have no description (exp unknown)
+
+[2026-07-02 02:11:06.690279]
+  NO-DESCRIPTION HIGH SCORE: 20 matched jobs have no description (exp unknown)
+
+[2026-07-02 20:56:08.432115]
+  NO-DESCRIPTION HIGH SCORE: 11 matched jobs have no description (exp unknown)
+
+[2026-07-02 21:12:07.523168]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 21:28:10.307262]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 21:44:06.122471]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 21:59:49.122494]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 22:15:06.836338]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 22:31:12.576494]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 22:47:13.636105]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)
+
+[2026-07-02 22:47:46.510663]
+  NO-DESCRIPTION HIGH SCORE: 19 matched jobs have no description (exp unknown)

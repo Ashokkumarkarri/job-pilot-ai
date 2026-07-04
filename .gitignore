@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+*.db
+*.log
+monitor_log.txt
+pipeline_log.txt
+shutdown_log.txt

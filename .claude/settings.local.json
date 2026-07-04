@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($py = \"C:\\\\Users\\\\ashok\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\"; cd \"C:\\\\Users\\\\ashok\\\\Desktop\\\\JobPilot_AI\"; & $py test_contact_finder.py)"
+    ]
+  }
+}

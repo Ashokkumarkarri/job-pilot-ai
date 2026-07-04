@@ -1,0 +1,13 @@
+python-jobspy
+playwright
+playwright-stealth
+beautifulsoup4
+groq
+python-dotenv
+pandas
+openpyxl
+apscheduler
+pyyaml
+requests
+lxml
+pdfplumber
