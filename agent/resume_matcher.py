@@ -213,13 +213,27 @@ def _score_via_ollama_safe(job, model):
             "experience_required": "unknown"}
 
 
-def _is_quota_error(e):
+def _is_daily_quota(e):
+    """True when the provider's DAILY limit is exhausted — permanent for this run."""
     err = str(e).lower()
     return any(kw in err for kw in [
-        "429", "rate_limit", "rate limit", "quota", "resource_exhausted",
-        "limit exceeded", "too many requests", "connection", "timeout",
-        "503", "502", "500",
-    ])
+        "resource_exhausted", "quota exceeded", "daily limit",
+        "per day", "exceeded your current quota",
+        # Groq daily exhaustion message contains the word "daily"
+        "daily",
+    ]) or ("429" in err and "resource_exhausted" in err)
+
+
+def _is_transient_rate_limit(e):
+    """True for per-minute / per-second rate limits — safe to retry after a short wait."""
+    err = str(e).lower()
+    return "429" in err and not _is_daily_quota(e)
+
+
+def _is_provider_down(e):
+    """True for server errors / network failures — retry once then switch."""
+    err = str(e).lower()
+    return any(kw in err for kw in ["502", "503", "504", "connection", "timeout"])
 
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
@@ -272,18 +286,32 @@ def score_job(job):
         return _score_via_ollama_safe(job, ollama_model)
 
     if not _groq_failed:
-        try:
-            return _score_via_groq(job, groq_model)
-        except Exception as e:
-            print(f"    Groq error ({str(e)[:60]}) — trying Gemini...")
-            _groq_failed = True
+        for attempt in range(3):
+            try:
+                return _score_via_groq(job, groq_model)
+            except Exception as e:
+                if _is_transient_rate_limit(e) and attempt < 2:
+                    import time; time.sleep(15 * (attempt + 1))
+                elif _is_daily_quota(e):
+                    _groq_failed = True
+                    break
+                else:
+                    _groq_failed = True
+                    break
 
     if not _gemini_failed:
-        try:
-            return _score_via_gemini(job, gemini_model)
-        except Exception as e:
-            print(f"    Gemini error ({str(e)[:60]}) — falling back to Ollama...")
-            _gemini_failed = True
+        for attempt in range(3):
+            try:
+                return _score_via_gemini(job, gemini_model)
+            except Exception as e:
+                if _is_transient_rate_limit(e) and attempt < 2:
+                    import time; time.sleep(15 * (attempt + 1))
+                elif _is_daily_quota(e):
+                    _gemini_failed = True
+                    break
+                else:
+                    _gemini_failed = True
+                    break
 
     return _score_via_ollama_safe(job, ollama_model)
 
@@ -312,8 +340,8 @@ def score_jobs_batch(jobs, batch_size=5):
     all_results = []
 
     for i in range(0, len(jobs), batch_size):
-        batch      = jobs[i:i + batch_size]
-        batch_num  = i // batch_size + 1
+        batch         = jobs[i:i + batch_size]
+        batch_num     = i // batch_size + 1
         total_batches = (len(jobs) + batch_size - 1) // batch_size
         print(f"    Batch {batch_num}/{total_batches} ({len(batch)} jobs)...", end=" ", flush=True)
 
@@ -323,37 +351,64 @@ def score_jobs_batch(jobs, batch_size=5):
             print("Ollama")
             continue
 
+        scored = False
+
         # ── Primary: Groq (14,400 req/day) ──────────────────────────────────
         if not _groq_failed:
-            try:
-                results = _score_batch_via_groq(batch, groq_model)
-                all_results.extend(results)
-                print("Groq OK")
-                continue
-            except Exception as e:
-                if _is_quota_error(e):
-                    print(f"Groq quota hit — switching to Gemini...")
-                else:
-                    print(f"Groq error — switching to Gemini...")
-                _groq_failed = True
+            for attempt in range(3):  # up to 2 retries on transient limits
+                try:
+                    results = _score_batch_via_groq(batch, groq_model)
+                    all_results.extend(results)
+                    print(f"Groq OK" + (f" (retry {attempt})" if attempt else ""))
+                    scored = True
+                    break
+                except Exception as e:
+                    if _is_transient_rate_limit(e) and attempt < 2:
+                        wait = 15 * (attempt + 1)   # 15s then 30s
+                        print(f"\n      Groq rate limit — waiting {wait}s...", end=" ", flush=True)
+                        import time; time.sleep(wait)
+                    elif _is_daily_quota(e):
+                        print(f"Groq daily quota hit — switching to Gemini...")
+                        _groq_failed = True
+                        break
+                    elif _is_provider_down(e) and attempt < 1:
+                        print(f"\n      Groq down — retrying...", end=" ", flush=True)
+                        import time; time.sleep(5)
+                    else:
+                        print(f"Groq error ({str(e)[:50]}) — switching to Gemini...")
+                        _groq_failed = True
+                        break
 
         # ── Secondary: Gemini (1,500 req/day) ───────────────────────────────
-        if not _gemini_failed:
-            try:
-                results = _score_batch_via_gemini(batch, gemini_model)
-                all_results.extend(results)
-                print("Gemini OK")
-                continue
-            except Exception as e:
-                if _is_quota_error(e):
-                    print(f"Gemini quota hit — falling back to Ollama...")
-                else:
-                    print(f"Gemini error — falling back to Ollama...")
-                _gemini_failed = True
+        if not scored and not _gemini_failed:
+            for attempt in range(3):
+                try:
+                    results = _score_batch_via_gemini(batch, gemini_model)
+                    all_results.extend(results)
+                    print(f"Gemini OK" + (f" (retry {attempt})" if attempt else ""))
+                    scored = True
+                    break
+                except Exception as e:
+                    if _is_transient_rate_limit(e) and attempt < 2:
+                        wait = 15 * (attempt + 1)
+                        print(f"\n      Gemini rate limit — waiting {wait}s...", end=" ", flush=True)
+                        import time; time.sleep(wait)
+                    elif _is_daily_quota(e):
+                        print(f"Gemini daily quota hit — falling back to Ollama...")
+                        _gemini_failed = True
+                        break
+                    elif _is_provider_down(e) and attempt < 1:
+                        print(f"\n      Gemini down — retrying...", end=" ", flush=True)
+                        import time; time.sleep(5)
+                    else:
+                        print(f"Gemini error ({str(e)[:50]}) — falling back to Ollama...")
+                        _gemini_failed = True
+                        break
 
-        # ── Last resort: Ollama (local) ──────────────────────────────────────
-        for job in batch:
-            all_results.append(_score_via_ollama_safe(job, ollama_model))
-        print("Ollama")
+        # ── Last resort: Ollama (local, unlimited) ───────────────────────────
+        if not scored:
+            for job in batch:
+                all_results.append(_score_via_ollama_safe(job, ollama_model))
+            print("Ollama")
 
     return all_results
