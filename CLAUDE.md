@@ -47,25 +47,24 @@ scheduler.py          — APScheduler BlockingScheduler, runs run_pipeline() eve
 
 ---
 
-## Active scrapers (15 total, all parallel)
+## Active scrapers (12 total, all parallel)
 
 | Source | Type | Notes |
 |---|---|---|
 | LinkedIn/Indeed/Google | jobspy library | 12 keywords × 4 locations × 40 results |
 | RemoteOK | REST API | remote only |
 | Remotive | REST API | remote only |
-| Arbeitnow | REST API | Europe + remote |
 | Jobicy | REST API | remote only |
 | WorkingNomads | REST API | remote only |
-| Shine | requests+BS4 | Indian job board |
 | Internshala | requests+BS4 | Indian fresher board |
 | Foundit | Playwright | Indian job board |
 | TimesJobs | requests+BS4 | Indian job board |
 | Naukri | requests+BS4 | India #1 board (may hit Cloudflare) |
 | Hirist | requests+BS4 | India tech jobs, 0-1yr filter |
 | Cutshort | Playwright | Indian startups |
-| Freshersworld | Playwright | Indian fresher-focused |
 | Wellfound | Playwright | Remote startup jobs |
+
+Removed (kept in scrapers/ but not active): Shine (fake posts), Freshersworld (training institute spam), Arbeitnow (EU jobs, irrelevant).
 
 ---
 
