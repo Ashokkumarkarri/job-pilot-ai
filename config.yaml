@@ -8,23 +8,28 @@ search:
     - "React Node Fresher"
     - "Junior Frontend Developer React"
     - "Junior Node.js Developer"
+    - "React.js Developer Entry Level"
+    - "Full Stack JavaScript Fresher"
+    - "MERN Developer 0 to 1 Year"
+    - "Junior Web Developer React"
   locations:
     - "Remote"
     - "Hyderabad"
     - "Bangalore"
     - "Visakhapatnam"
   experience_range: "0-1"
-  results_per_keyword: 25
+  results_per_keyword: 40
 
 matching:
   relevance_threshold: 7
+  gemini_model: "gemini-2.5-flash"
   groq_model: "llama-3.1-8b-instant"
   ollama_model: "qwen3:8b"
   use_ollama: false
   max_experience_years: 1
 
 scraping:
-  interval_hours: 2
+  interval_hours: 1
   hours_old: 24
   delay_between_requests: 3
 

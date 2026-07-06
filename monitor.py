@@ -8,7 +8,6 @@ Checks every 30 minutes:
 Writes monitor_log.txt with each check result.
 """
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -16,14 +15,10 @@ from datetime import datetime, timedelta
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agent.exp_filter import has_experience_requirement, find_experience_snippet
+from agent.exp_filter import has_experience_requirement, find_experience_snippet, SENIOR_TITLE_RE
 
 LOG_FILE  = "monitor_log.txt"
 DB_PATH   = "jobs.db"
-
-SENIOR_RE = re.compile(
-    r"\b(senior|sr\.?\s|lead\s|principal|staff\s+eng|engineering\s+manager|"
-    r"director|head\s+of|vice\s+pres|vp\s+of|architect(?!\s+as))\b", re.IGNORECASE)
 
 
 def _log(msg: str):
@@ -124,7 +119,7 @@ def _check_db_quality() -> dict:
         desc  = str(r["description"] or "").strip()
         score = r["relevance_score"]
 
-        if SENIOR_RE.search(title):
+        if SENIOR_TITLE_RE.search(title):
             senior_slipped.append(f"{title} @ {r['company']} (score={score})")
             continue
 
@@ -208,9 +203,17 @@ def run_monitor():
     else:
         _log("  Last job scraped         : unknown (DB empty or new)")
 
-    # Restart if not running AND last job was more than 2.5 hours ago (pipeline interval is 2h)
+    # Restart if not running AND last job was more than interval + 30 min ago
+    try:
+        import yaml
+        with open("config.yaml") as _cf:
+            _cfg = yaml.safe_load(_cf)
+        _interval_h = _cfg["scraping"]["interval_hours"]
+    except Exception:
+        _interval_h = 2
+    stale_threshold = (_interval_h + 0.5) * 3600
     stale = (last_job_time is None or
-             (datetime.now() - last_job_time).total_seconds() > 2.5 * 3600)
+             (datetime.now() - last_job_time).total_seconds() > stale_threshold)
     if not running and stale:
         _log("  ALERT: Pipeline is DOWN and stale — restarting!")
         _restart_pipeline()
@@ -236,8 +239,10 @@ def run_monitor():
             f.write(f"\n[{datetime.now()}]\n")
             for iss in quality["issues"]:
                 f.write(f"  {iss}\n")
-    else:
+    elif quality["total_checked"] > 0:
         _log("  Quality: OK — no experience/senior slippage detected")
+    else:
+        _log("  Quality: no recent matched jobs to check")
 
     # 4. Score distribution
     dist = _check_score_distribution()

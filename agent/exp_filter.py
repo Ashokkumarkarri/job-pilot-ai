@@ -1,11 +1,43 @@
 """
-Shared experience-requirement detection for scheduler, export, and monitor.
-
-Only matches MINIMUM experience requirements of 2+ years.
-Does NOT match ceilings like "up to 5 years welcome".
-Does NOT match company age like "35 years of experience".
+Shared experience-requirement detection + title filters for the whole pipeline.
+Import regex patterns from here — do NOT redefine them in other files.
 """
 import re
+
+# ── Title pre-filter regexes (single source of truth) ────────────────────────
+
+INTERNSHIP_TITLE_RE = re.compile(
+    r"\b(intern(ship)?|internships|trainee\s+program|apprentice(ship)?)\b",
+    re.IGNORECASE,
+)
+
+SENIOR_TITLE_RE = re.compile(
+    r"\b(senior|sr\.?\s|lead\s|principal|staff\s+eng|engineering\s+manager|"
+    r"director|head\s+of|vice\s+pres|vp\s+of|architect(?!\s+as))\b",
+    re.IGNORECASE,
+)
+
+IRRELEVANT_TITLE_RE = re.compile(
+    r"\b("
+    r"android|flutter|ios\s+dev|swift\s+dev|kotlin|"
+    r"devops|sre\s+|site\s+reliability|cloud\s+eng|"
+    r"data\s+scientist|data\s+engineer|data\s+analyst|"
+    r"machine\s+learning|ml\s+eng|pyspark|"
+    r"business\s+analyst|bi\s+developer|"
+    r"java\s+dev|java\s+eng|java\s+full|"
+    r"\.net\s+dev|\.net\s+eng|dotnet|"
+    r"php\s+dev|php\s+eng|"
+    r"python\s+dev|python\s+eng|django\s+dev|"
+    r"ruby\s+dev|golang\s+dev|go\s+dev|"
+    r"c\+\+\s+dev|embedded\s+dev|"
+    r"salesforce|sap\s+|"
+    r"manufacturing|quality\s+assurance|qa\s+eng|"
+    r"product\s+manager|product\s+owner|scrum\s+master|"
+    r"technical\s+writer|technical\s+support|"
+    r"guard\b|transportation\s+rep|relationship\s+manager"
+    r")\b",
+    re.IGNORECASE,
+)
 
 # Matches ONLY clear minimum/required experience of 2-20 years.
 # Patterns deliberately narrow to avoid false positives:

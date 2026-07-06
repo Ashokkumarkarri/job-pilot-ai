@@ -10,7 +10,7 @@ COLUMN_MAP = {
     "title":               "Job Title",
     "company":             "Company",
     "location":            "Location",
-    "source":              "Source",
+    "source":              "Platform",
     "relevance_score":     "Match Score",
     "internship_friendly": "Intern Friendly",
     "experience_required": "Exp Required",
@@ -173,10 +173,18 @@ def export_to_excel(output_path=None, min_score=7, include_all=False):
 
     df_all = _prepare_df(jobs)
 
-    # Last 24 hours sheet
-    df_24h = df_all[df_all["Days Old"].apply(
-        lambda x: isinstance(x, (int, float)) and x <= 1
-    )] if "Days Old" in df_all.columns else pd.DataFrame()
+    # Last 24 hours sheet — include jobs with no date_posted but scraped today
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    def _is_recent(row):
+        days = row.get("Days Old") if isinstance(row, dict) else None
+        if isinstance(days, (int, float)) and days <= 1:
+            return True
+        scraped = str(row.get("date_scraped", "") if isinstance(row, dict) else "")
+        return scraped.startswith(today_str)
+    if "Days Old" in df_all.columns:
+        df_24h = df_all[df_all["Days Old"].apply(lambda x: isinstance(x, (int, float)) and x <= 1)]
+    else:
+        df_24h = pd.DataFrame()
 
     # Internship-friendly sheet
     df_intern = df_all[df_all.get("Intern Friendly", pd.Series()) == "YES"] \

@@ -1,31 +1,14 @@
-import re
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import yaml
-from agent.exp_filter import has_experience_requirement
+from agent.exp_filter import (
+    has_experience_requirement,
+    INTERNSHIP_TITLE_RE, SENIOR_TITLE_RE, IRRELEVANT_TITLE_RE,
+)
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-
-# ── Pre-filters: applied before LLM scoring to skip obviously bad jobs instantly ──
-INTERNSHIP_TITLE_RE = re.compile(
-    r"\b(intern(ship)?|internships|trainee\s+program|apprentice(ship)?)\b",
-    re.IGNORECASE,
-)
-SENIOR_TITLE_RE = re.compile(
-    r"\b(senior|sr\.?\s|lead\s|principal|staff\s+eng|engineering\s+manager|"
-    r"director|head\s+of|vice\s+pres|vp\s+of|architect(?!\s+as))\b",
-    re.IGNORECASE,
-)
-IRRELEVANT_TITLE_RE = re.compile(
-    r"\b(android|flutter|ios\s+dev|swift\s+dev|kotlin|"
-    r"devops|sre\s+|site\s+reliability|data\s+scientist|data\s+engineer|"
-    r"machine\s+learning\s+eng|pyspark|salesforce|sap\s+|"
-    r"manufacturing|quality\s+assurance|qa\s+eng|guard\b|"
-    r"transportation\s+rep|relationship\s+manager)\b",
-    re.IGNORECASE,
-)
 
 
 def load_config():
@@ -40,23 +23,36 @@ def run_pipeline():
     from scrapers.arbeitnow       import scrape_arbeitnow
     from scrapers.jobicy          import scrape_jobicy
     from scrapers.workingnomads   import scrape_workingnomads
-    from scrapers.hackernews      import scrape_hackernews
     from scrapers.shine           import scrape_shine
     from scrapers.internshala     import scrape_internshala
     from scrapers.foundit         import scrape_foundit
     from scrapers.timesjobs       import scrape_timesjobs
-    from agent.resume_matcher import score_job, load_resume
-    from agent.contact_finder import find_contact
-    from agent.email_drafter  import draft_email_lite
-    from agent.gmail_drafts   import save_all_drafts
-    from storage.database     import job_exists, insert_job, update_contact, update_draft_email, get_relevant_jobs
+    from scrapers.naukri          import scrape_naukri
+    from scrapers.hirist          import scrape_hirist
+    from scrapers.cutshort        import scrape_cutshort
+    from scrapers.freshersworld   import scrape_freshersworld
+    from scrapers.wellfound       import scrape_wellfound
+    from agent.resume_matcher import score_jobs_batch, check_score_cache, load_resume, reset_llm_state
+    from storage.database     import job_exists, insert_job, get_relevant_jobs
     from storage.excel_export import export_to_excel
 
-    config = load_config()
+    config    = load_config()
     threshold = config["matching"]["relevance_threshold"]
 
-    import io, os as _os
+    import os as _os
     _log_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "pipeline_log.txt")
+
+    # Log rotation: keep last 2000 lines when file grows past 5000
+    try:
+        if _os.path.exists(_log_path):
+            with open(_log_path, "r", encoding="utf-8") as _lf:
+                _lines = _lf.readlines()
+            if len(_lines) > 5000:
+                with open(_log_path, "w", encoding="utf-8") as _lf:
+                    _lf.writelines(_lines[-2000:])
+    except Exception:
+        pass
+
     def _plog(msg):
         from datetime import datetime as _dt
         line = f"[{_dt.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
@@ -68,19 +64,13 @@ def run_pipeline():
     _plog("  JobPilot AI  Pipeline Starting")
     _plog("=" * 55)
 
-    # 1. Load resume (sets internal state used by scorer)
-    print("\n[1/6] Loading resume...")
+    # 1. Load resume + reset LLM fallback flags for this run
+    print("\n[1/4] Loading resume...")
     load_resume(config["resume"]["path"])
+    reset_llm_state()
 
-    # Reset Groq fallback flag so each run starts fresh (Groq quota may have refilled)
-    try:
-        from agent.resume_matcher import reset_groq_state
-        reset_groq_state()
-    except Exception:
-        pass
-
-    # 2. Scrape all sources IN PARALLEL (I/O-bound — big time saving)
-    print("\n[2/6] Scraping jobs from all sources (parallel)...")
+    # 2. Scrape all sources in parallel
+    print("\n[2/4] Scraping jobs from all sources (parallel)...")
     all_jobs = []
 
     sources = [
@@ -90,28 +80,33 @@ def run_pipeline():
         ("Arbeitnow",      scrape_arbeitnow),
         ("Jobicy",         scrape_jobicy),
         ("WorkingNomads",  scrape_workingnomads),
-        ("HackerNews",     scrape_hackernews),
         ("Shine",          scrape_shine),
         ("Internshala",    scrape_internshala),
         ("Foundit",        scrape_foundit),
         ("TimesJobs",      scrape_timesjobs),
-        # Naukri — Cloudflare blocks all approaches (requests + Playwright), disabled
-        # Hirist — SPA blocks headless browsers entirely, disabled
+        ("Naukri",         scrape_naukri),
+        ("Hirist",         scrape_hirist),
+        ("Cutshort",       scrape_cutshort),
+        ("Freshersworld",  scrape_freshersworld),
+        ("Wellfound",      scrape_wellfound),
     ]
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
     import threading
-    _print_lock = threading.Lock()
+    _print_lock  = threading.Lock()
+    source_counts = {}
 
     def _run_scraper(item):
         name, fn = item
         try:
             jobs = fn()
             with _print_lock:
+                source_counts[name] = len(jobs)
                 print(f"  {name}: {len(jobs)} jobs")
             return jobs
         except Exception as e:
             with _print_lock:
+                source_counts[name] = 0
                 print(f"  {name}: ERROR — {e}")
             return []
 
@@ -119,8 +114,12 @@ def run_pipeline():
         for batch in _ex.map(_run_scraper, sources):
             all_jobs.extend(batch)
 
+    # Per-source log
+    for name, cnt in source_counts.items():
+        _plog(f"  Source [{name}]: {cnt} jobs")
+
     # Global dedup across all sources
-    seen_keys = set()
+    seen_keys  = set()
     unique_jobs = []
     for job in all_jobs:
         key = f"{job.get('company','').lower()}|{job.get('title','').lower()}"
@@ -131,9 +130,10 @@ def run_pipeline():
 
     new_jobs = [j for j in unique_jobs if not job_exists(j["job_id"])]
 
-    # Drop jobs older than 14 days (stale postings) — only when date is known
+    # Drop stale jobs (>14 days old when date is known)
     from datetime import datetime as _dt2, timedelta as _td2
     _cutoff = _dt2.now() - _td2(days=14)
+
     def _fresh(job):
         dp = str(job.get("date_posted") or "").strip()
         if not dp or dp in ("nan", "None"):
@@ -142,8 +142,9 @@ def run_pipeline():
             return _dt2.strptime(dp[:10], "%Y-%m-%d") >= _cutoff
         except Exception:
             return True
+
     before_fresh = len(new_jobs)
-    new_jobs = [j for j in new_jobs if _fresh(j)]
+    new_jobs     = [j for j in new_jobs if _fresh(j)]
     stale_dropped = before_fresh - len(new_jobs)
     if stale_dropped:
         print(f"  Dropped {stale_dropped} stale jobs (>14 days old)")
@@ -155,53 +156,81 @@ def run_pipeline():
         export_to_excel(config["storage"]["excel_path"], threshold)
         return
 
-    # 3. Score jobs — pre-filters at top, Qwen3 only for genuine candidates
-    print(f"\n[3/6] Scoring {len(new_jobs)} new jobs...")
+    # 3. Score jobs — 3-pass: pre-filters → cache → batch AI
+    total    = len(new_jobs)
+    print(f"\n[3/4] Scoring {total} new jobs...")
     relevant = []
+    needs_ai = []
 
+    # Pass 1: instant pre-filters (zero API calls)
     for i, job in enumerate(new_jobs, 1):
         title = job.get("title", "")
+        desc  = job.get("description", "") or ""
+
+        def _skip(label, score, exp, _i=i, _title=title):
+            job["relevance_score"]     = score
+            job["match_reason"]        = label
+            job["internship_friendly"] = 0
+            job["experience_required"] = exp
+            insert_job(job)
+            tag = f" {score}/10 [skip] [{exp.upper()[:10]}]"
+            print(f"  [{_i:>3}/{total}]{tag} {_title[:42]}")
+
         if INTERNSHIP_TITLE_RE.search(title):
-            job["relevance_score"]     = 1
-            job["match_reason"]        = "Internship position — skipped (targeting full-time roles)"
+            _skip("Internship — skipped", 1, "internship")
+        elif SENIOR_TITLE_RE.search(title):
+            _skip("Senior/lead role — skipped", 1, "senior")
+        elif IRRELEVANT_TITLE_RE.search(title):
+            _skip("Irrelevant tech/role — skipped", 1, "irrelevant")
+        elif has_experience_requirement(desc):
+            _skip("Requires 2+ years experience — skipped", 1, "2+ years")
+        elif not desc or len(desc.strip()) < 50:
+            job["relevance_score"]     = 5
+            job["match_reason"]        = "No description — verify manually"
             job["internship_friendly"] = 0
-            job["experience_required"] = "internship"
+            job["experience_required"] = "unknown"
             insert_job(job)
-            print(f"  [{i:>3}/{len(new_jobs)}]  1/10 [skip] [INTERNSHIP] {title[:40]} @ {job.get('company','')[:25]}")
-            continue
+            print(f"  [{i:>3}/{total}]  5/10 [hold] [NO-DESC]  {title[:42]}")
+        else:
+            needs_ai.append((i, job))
 
-        if SENIOR_TITLE_RE.search(title):
-            job["relevance_score"]     = 1
-            job["match_reason"]        = "Senior/lead role — skipped (targeting 0-1 year experience)"
-            job["internship_friendly"] = 0
-            job["experience_required"] = "senior"
+    pre_filtered = total - len(needs_ai)
+    print(f"\n  Pre-filtered: {pre_filtered}/{total} jobs (no AI needed)")
+
+    # Pass 2: cache check
+    still_needs_ai = []
+    cache_hits     = 0
+    for orig_i, job in needs_ai:
+        cached = check_score_cache(job.get("title", ""), job.get("company", ""))
+        if cached:
+            score    = cached["score"]
+            intern_f = 1 if cached["internship_friendly"] else 0
+            job["relevance_score"]     = score
+            job["match_reason"]        = cached["reason"]
+            job["internship_friendly"] = intern_f
+            job["experience_required"] = cached["experience_required"]
             insert_job(job)
-            print(f"  [{i:>3}/{len(new_jobs)}]  1/10 [skip] [SENIOR] {title[:40]} @ {job.get('company','')[:25]}")
-            continue
+            tag = "MATCH" if score >= threshold else "skip"
+            print(f"  [{orig_i:>3}/{total}] {score:>2}/10 [{tag}] [CACHED]   {job['title'][:42]}")
+            if score >= threshold:
+                relevant.append(job)
+            cache_hits += 1
+        else:
+            still_needs_ai.append((orig_i, job))
 
-        if IRRELEVANT_TITLE_RE.search(title):
-            job["relevance_score"]     = 1
-            job["match_reason"]        = "Irrelevant tech/role — skipped"
-            job["internship_friendly"] = 0
-            job["experience_required"] = "irrelevant"
-            insert_job(job)
-            print(f"  [{i:>3}/{len(new_jobs)}]  1/10 [skip] [IRRELEVANT] {title[:40]} @ {job.get('company','')[:25]}")
-            continue
+    if cache_hits:
+        print(f"  Cache hits: {cache_hits} jobs reused from last 7 days")
 
-        desc = job.get("description", "") or ""
-        if has_experience_requirement(desc):
-            job["relevance_score"]     = 1
-            job["match_reason"]        = "Description requires 2+ years experience — skipped"
-            job["internship_friendly"] = 0
-            job["experience_required"] = "2+ years"
-            insert_job(job)
-            print(f"  [{i:>3}/{len(new_jobs)}]  1/10 [skip] [EXP>1YR] {title[:40]} @ {job.get('company','')[:25]}")
-            continue
+    # Pass 3: batch AI scoring (5 jobs per call)
+    if still_needs_ai:
+        ai_jobs  = [j for _, j in still_needs_ai]
+        n_batches = (len(ai_jobs) + 4) // 5
+        print(f"\n  AI scoring: {len(ai_jobs)} jobs in {n_batches} batch(es) of 5...")
+        results = score_jobs_batch(ai_jobs, batch_size=5)
 
-        try:
-            result = score_job(job)
-            score   = int(result.get("score", 0))
-            reason  = result.get("reason", "")
+        for (orig_i, job), result in zip(still_needs_ai, results):
+            score    = int(result.get("score", 0))
+            reason   = result.get("reason", "")
             intern_f = 1 if result.get("internship_friendly") else 0
             exp_req  = result.get("experience_required", "")
 
@@ -210,23 +239,29 @@ def run_pipeline():
             job["internship_friendly"] = intern_f
             job["experience_required"] = exp_req
 
+            if score == 0:
+                # AI failed to score — do NOT insert into DB
+                print(f"  [{orig_i:>3}/{total}]  0/10 [skip] [SCORE0]  {job['title'][:42]} — not saved")
+                continue
+
             insert_job(job)
+
             tag = "MATCH" if score >= threshold else "skip"
             inf = " [INTERN-OK]" if intern_f else ""
-            print(f"  [{i:>3}/{len(new_jobs)}] {score:>2}/10 [{tag}]{inf} {title[:40]} @ {job.get('company','')[:25]}")
+            print(f"  [{orig_i:>3}/{total}] {score:>2}/10 [{tag}]{inf} {job['title'][:42]} @ {job.get('company','')[:20]}")
 
             if score >= threshold:
                 relevant.append(job)
+    else:
+        print("  No jobs needed AI scoring this run.")
 
-        except Exception as e:
-            print(f"  [{i:>3}/{len(new_jobs)}] ERROR scoring: {e}")
-
+    _plog(f"  Pre-filtered: {pre_filtered} | Cache: {cache_hits} | AI-scored: {len(still_needs_ai)}")
     _plog(f"  Relevant (score >= {threshold}): {len(relevant)}")
 
-    # 4. Description filler — BEFORE email so hidden exp requirements are caught first
+    # 4. Description filler — catch hidden exp requirements before emailing
     try:
         from agent.description_filler import run_filler
-        _plog(f"\n[4/6] Auto-filling descriptions for no-desc matched jobs...")
+        _plog(f"\n[4/4] Auto-filling descriptions for no-desc matched jobs...")
         run_filler(limit=40, rescore=True)
     except Exception as e:
         print(f"[!] Description filler error: {e}")
@@ -237,7 +272,7 @@ def run_pipeline():
     _conn.row_factory = _sq3.Row
     _rel_ids = [j["job_id"] for j in relevant]
     if _rel_ids:
-        _ph = ",".join("?" * len(_rel_ids))
+        _ph   = ",".join("?" * len(_rel_ids))
         _rows = _conn.execute(
             f"SELECT * FROM jobs WHERE job_id IN ({_ph}) AND relevance_score >= ?",
             _rel_ids + [threshold]
@@ -246,54 +281,17 @@ def run_pipeline():
     _conn.close()
     _plog(f"  After description filler: {len(relevant)} still relevant")
 
-    # Export full sheet
+    # Export full Excel sheet
     export_to_excel(config["storage"]["excel_path"], threshold)
 
-    # Email #1 — APPLY NOW (fast, sent before contact search)
+    # Send notification email
     if relevant:
         from agent.notify_email import send_report
-        _plog(f"[+] Sending APPLY NOW email ({len(relevant)} jobs)...")
+        _plog(f"[+] Sending notification email ({len(relevant)} jobs)...")
         ok = send_report(relevant, tag="[APPLY NOW]")
-        _plog(f"[+] Email #1 {'sent OK' if ok else 'FAILED'}")
+        _plog(f"[+] Email {'sent OK' if ok else 'FAILED'}")
     else:
         _plog("[+] No relevant jobs this run — skipping email.")
-
-    # 5. Find HR contacts
-    print(f"\n[5/6] Finding contacts for {len(relevant)} relevant jobs...")
-    for job in relevant:
-        website = job.get("company_website", "")
-        contacts = find_contact(website, company_name=job.get("company", ""))
-        if contacts.get("email_1"):
-            update_contact(job["job_id"], contacts)
-            job.update(contacts)
-            info = contacts["email_1"]
-            if contacts.get("phone"):
-                info += f" | {contacts['phone']}"
-            print(f"  {job['company'][:30]}: {info}")
-        else:
-            print(f"  {job['company'][:30]}: no contact found")
-
-    # 6. Draft + Gmail Drafts — only for jobs where HR contact was found
-    jobs_with_contact = [j for j in relevant if j.get("hr_email")]
-    print(f"\n[6/6] Drafting emails for {len(jobs_with_contact)} jobs with HR contact...")
-    for job in jobs_with_contact:
-        try:
-            draft = draft_email_lite(job)
-            update_draft_email(job["job_id"], draft)
-            job["draft_email"] = draft
-            print(f"  Drafted: {job['title'][:40]} @ {job['company'][:25]}")
-        except Exception as e:
-            print(f"  Draft error [{job['company']}]: {e}")
-
-    save_all_drafts(jobs_with_contact)
-
-    # Email #2 — +HR Contacts (only if at least 1 contact was found)
-    if jobs_with_contact:
-        _plog(f"[+] Sending HR Contacts email ({len(jobs_with_contact)} contacts found)...")
-        ok = send_report(relevant, tag="[+HR Contacts]")
-        _plog(f"[+] Email #2 {'sent OK' if ok else 'FAILED'}")
-    else:
-        _plog("[+] No HR contacts found this run — skipping contacts email.")
 
     _plog("=" * 55)
     _plog("  Pipeline Complete")
@@ -302,7 +300,7 @@ def run_pipeline():
 
 def start_scheduler():
     config = load_config()
-    hours = config["scraping"]["interval_hours"]
+    hours  = config["scraping"]["interval_hours"]
 
     scheduler = BlockingScheduler()
     scheduler.add_job(

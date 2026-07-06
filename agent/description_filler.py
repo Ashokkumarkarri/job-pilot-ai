@@ -141,7 +141,7 @@ def run_filler(limit: int = 50, rescore: bool = True, dry_run: bool = False):
 
     Args:
         limit:    Max jobs to process per run (keep low to avoid rate limits)
-        rescore:  If True, re-score with Groq after fetching description
+        rescore:  If True, batch re-score with AI after fetching descriptions
         dry_run:  If True, print results but don't update DB
     """
     config    = _load_config()
@@ -166,49 +166,75 @@ def run_filler(limit: int = 50, rescore: bool = True, dry_run: bool = False):
 
     print(f"[DescFiller] Processing {len(rows)} no-description matched jobs...")
 
-    downgraded = 0
-    enriched   = 0
-
-    if rescore:
-        from agent.resume_matcher import score_job, load_resume
-        load_resume(config["resume"]["path"])
-
+    # Phase 1: fetch all descriptions (with delays to avoid rate limits)
+    # fetched = list of (row, desc, pre_score_or_None, pre_reason_or_None)
+    fetched = []
     for i, row in enumerate(rows, 1):
-        job_id = row["job_id"]
-        title  = row["title"]
-        company = row["company"]
-        url    = row["job_url"]
+        title     = row["title"]
+        company   = row["company"]
         old_score = row["relevance_score"]
 
         print(f"  [{i:>3}/{len(rows)}] Fetching: {title[:40]} @ {company[:25]}")
-
-        desc = _fetch_description(url, row["source"])
+        desc = _fetch_description(row["job_url"], row["source"])
 
         if not desc:
             print(f"    -> Could not fetch description, skipping")
             time.sleep(1)
             continue
 
-        # Quick pre-check: does description have exp requirement?
         if has_experience_requirement(desc):
-            new_score = 2
-            reason    = "Description requires 2+ years experience (fetched post-insert)"
-            print(f"    -> EXP REQUIRED in desc — downgrading {old_score} -> {new_score}")
-        elif rescore:
-            try:
-                job_dict = dict(row)
-                job_dict["description"] = desc
-                result    = score_job(job_dict)
-                new_score = int(result.get("score", old_score))
-                reason    = result.get("reason", "")
-                print(f"    -> Re-scored: {old_score} -> {new_score}  {reason[:60]}")
-            except Exception as e:
-                print(f"    -> Score error: {e}")
-                new_score = old_score
-                reason    = ""
+            pre_score  = 2
+            pre_reason = "Description requires 2+ years experience (fetched post-insert)"
+            print(f"    -> EXP REQUIRED — downgrading {old_score} -> {pre_score}")
+            fetched.append((row, desc, pre_score, pre_reason))
         else:
-            new_score = old_score
-            reason    = ""
+            # Mark for AI rescoring
+            fetched.append((row, desc, None, None))
+
+        time.sleep(2 + random.random() * 2)
+
+    if not fetched:
+        print("[DescFiller] Nothing fetched successfully.")
+        return
+
+    # Phase 2: batch AI rescore for jobs without pre-determined score
+    if rescore:
+        from agent.resume_matcher import score_jobs_batch, load_resume
+        load_resume(config["resume"]["path"])
+
+        needs_ai = [(row, desc) for row, desc, ps, _ in fetched if ps is None]
+        if needs_ai:
+            print(f"\n[DescFiller] AI-rescoring {len(needs_ai)} jobs in batches of 5...")
+            ai_jobs = []
+            for row, desc in needs_ai:
+                jd = dict(row)
+                jd["description"] = desc
+                ai_jobs.append(jd)
+            results = score_jobs_batch(ai_jobs, batch_size=5)
+
+            ai_idx   = 0
+            resolved = []
+            for row, desc, pre_score, pre_reason in fetched:
+                if pre_score is not None:
+                    resolved.append((row, desc, pre_score, pre_reason))
+                else:
+                    result    = results[ai_idx]
+                    ai_idx   += 1
+                    new_score = int(result.get("score", row["relevance_score"]))
+                    reason    = result.get("reason", "")
+                    print(f"    Re-scored {row['title'][:40]}: {row['relevance_score']} -> {new_score}  {reason[:60]}")
+                    resolved.append((row, desc, new_score, reason))
+            fetched = resolved
+    else:
+        # Keep old scores when rescore=False
+        fetched = [(row, desc, row["relevance_score"], "") for row, desc, ps, _ in fetched]
+
+    # Phase 3: apply DB updates
+    downgraded = 0
+    enriched   = 0
+    for row, desc, new_score, reason in fetched:
+        old_score = row["relevance_score"]
+        job_id    = row["job_id"]
 
         if not dry_run:
             conn = sqlite3.connect(DB_PATH)
@@ -222,9 +248,6 @@ def run_filler(limit: int = 50, rescore: bool = True, dry_run: bool = False):
         if new_score < threshold and old_score >= threshold:
             downgraded += 1
         enriched += 1
-
-        delay = 2 + random.random() * 2
-        time.sleep(delay)
 
     print(f"\n[DescFiller] Done — enriched: {enriched}, downgraded: {downgraded}")
     if downgraded > 0 and not dry_run:

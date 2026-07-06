@@ -134,6 +134,16 @@ def update_draft_email(job_id, draft):
     conn.close()
 
 
+def delete_zero_score_jobs() -> int:
+    """Delete all jobs with relevance_score = 0 (failed scoring). Returns count deleted."""
+    conn = get_conn()
+    cur  = conn.execute("DELETE FROM jobs WHERE relevance_score = 0")
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 def update_status(job_id, status):
     valid = {"new", "emailed", "response", "interview", "offer", "rejected"}
     if status.lower() not in valid:
