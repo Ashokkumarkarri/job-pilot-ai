@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 *.db
 *.log
+*.xlsx
 monitor_log.txt
 pipeline_log.txt
 shutdown_log.txt
+quality_issues.txt
