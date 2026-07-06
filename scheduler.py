@@ -20,17 +20,14 @@ def run_pipeline():
     from scrapers.linkedin_indeed import scrape_linkedin_indeed
     from scrapers.remoteok        import scrape_remoteok
     from scrapers.remotive        import scrape_remotive
-    from scrapers.arbeitnow       import scrape_arbeitnow
     from scrapers.jobicy          import scrape_jobicy
     from scrapers.workingnomads   import scrape_workingnomads
-    from scrapers.shine           import scrape_shine
     from scrapers.internshala     import scrape_internshala
     from scrapers.foundit         import scrape_foundit
     from scrapers.timesjobs       import scrape_timesjobs
     from scrapers.naukri          import scrape_naukri
     from scrapers.hirist          import scrape_hirist
     from scrapers.cutshort        import scrape_cutshort
-    from scrapers.freshersworld   import scrape_freshersworld
     from scrapers.wellfound       import scrape_wellfound
     from agent.resume_matcher import score_jobs_batch, check_score_cache, load_resume, reset_llm_state
     from storage.database     import job_exists, insert_job, get_relevant_jobs
@@ -77,17 +74,14 @@ def run_pipeline():
         ("LinkedIn/Indeed/Google", scrape_linkedin_indeed),
         ("RemoteOK",       scrape_remoteok),
         ("Remotive",       scrape_remotive),
-        ("Arbeitnow",      scrape_arbeitnow),
         ("Jobicy",         scrape_jobicy),
         ("WorkingNomads",  scrape_workingnomads),
-        ("Shine",          scrape_shine),
         ("Internshala",    scrape_internshala),
         ("Foundit",        scrape_foundit),
         ("TimesJobs",      scrape_timesjobs),
         ("Naukri",         scrape_naukri),
         ("Hirist",         scrape_hirist),
         ("Cutshort",       scrape_cutshort),
-        ("Freshersworld",  scrape_freshersworld),
         ("Wellfound",      scrape_wellfound),
     ]
 
