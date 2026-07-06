@@ -95,6 +95,25 @@ def _fetch_jobs(slug):
                 if m:
                     date_posted = m.group(0)
 
+            # Applicant count — Internshala shows "X applicants" or "X students applied"
+            applicants = ""
+            for sel in [".applications_count", ".application_status",
+                        ".status-success", "[class*='applicant']", "[class*='application']"]:
+                app_el = card.select_one(sel)
+                if app_el:
+                    app_txt = app_el.get_text(strip=True)
+                    m = re.search(r"([\d,]+)\s*(?:applicant|application|applied|student)", app_txt, re.IGNORECASE)
+                    if m:
+                        applicants = m.group(1).replace(",", "")
+                        break
+            # Fallback: scan all text in card for "X applicant(s)" pattern
+            if not applicants:
+                for txt_node in card.stripped_strings:
+                    m = re.search(r"([\d,]+)\s*(?:applicant|application|applied)", txt_node, re.IGNORECASE)
+                    if m:
+                        applicants = m.group(1).replace(",", "")
+                        break
+
             jobs.append({
                 "job_id":          job_id,
                 "title":           title,
@@ -105,6 +124,7 @@ def _fetch_jobs(slug):
                 "description":     f"{title} at {company}. Location: {loc_txt}. {salary}".strip(),
                 "date_posted":     date_posted,
                 "company_website": "",
+                "applicants":      applicants,
             })
         except Exception:
             continue

@@ -62,6 +62,7 @@ def migrate_db():
         ("draft_email",         "TEXT"),
         ("status",              "TEXT DEFAULT 'new'"),
         ("match_reason",        "TEXT"),
+        ("applicants",          "TEXT"),
     ]
     conn = get_conn()
     existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
@@ -87,8 +88,9 @@ def insert_job(job):
             INSERT INTO jobs
                 (job_id, title, company, location, source, job_url, description,
                  relevance_score, match_reason, internship_friendly, experience_required,
-                 days_old, hr_email, hr_name, company_website, date_posted, date_scraped)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 days_old, hr_email, hr_name, company_website, date_posted, date_scraped,
+                 applicants)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''', (
             job.get("job_id"),        job.get("title"),       job.get("company"),
             job.get("location"),      job.get("source"),      job.get("job_url"),
@@ -97,7 +99,7 @@ def insert_job(job):
             job.get("experience_required"), job.get("days_old"),
             job.get("hr_email"),      job.get("hr_name"),
             job.get("company_website"), job.get("date_posted"),
-            datetime.now().isoformat()
+            datetime.now().isoformat(), job.get("applicants", "")
         ))
         conn.commit()
         return True
