@@ -11,16 +11,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _resume_text   = None
-_gemini_failed = False
 _groq_failed   = False
+_gemini_failed = False
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 def reset_llm_state():
-    global _gemini_failed, _groq_failed
-    _gemini_failed = False
+    global _groq_failed, _gemini_failed
     _groq_failed   = False
+    _gemini_failed = False
 
 
 reset_groq_state = reset_llm_state  # backwards-compat alias
@@ -43,7 +43,7 @@ def load_resume(path=None):
     return _resume_text
 
 
-# ── Prompts ──────────────────────────────────────────────────────────────────
+# ── Prompts ───────────────────────────────────────────────────────────────────
 
 _RULES = """SCORING (Kumar Naidu Karri — MERN fresher, 0-1yr target):
 SKILLS: React.js Node.js Express.js MongoDB JavaScript TypeScript REST APIs Git HTML/CSS Tailwind
@@ -75,6 +75,7 @@ Reply with JSON only:
 
 
 def _build_batch_prompt(jobs):
+    """Batch prompt for Gemini — expects a JSON array response."""
     blocks = []
     for i, job in enumerate(jobs, 1):
         blocks.append(
@@ -83,7 +84,6 @@ def _build_batch_prompt(jobs):
             f"{_trim_desc(job.get('description',''))}"
         )
     jobs_text = "\n\n".join(blocks)
-
     return f"""{_RULES}
 
 {jobs_text}
@@ -92,7 +92,61 @@ Return a JSON array with exactly {len(jobs)} objects in order:
 [{{"job":1,"score":<1-10>,"reason":"<one sentence>","internship_friendly":<bool>,"experience_required":"<phrase or not mentioned>"}},...]"""
 
 
+def _build_batch_prompt_groq(jobs):
+    """Batch prompt for Groq — expects {\"results\":[...]} to comply with json_object mode."""
+    blocks = []
+    for i, job in enumerate(jobs, 1):
+        blocks.append(
+            f"[JOB {i}] {job.get('title','')} @ {job.get('company','')}\n"
+            f"Location: {job.get('location','')}\n"
+            f"{_trim_desc(job.get('description',''))}"
+        )
+    jobs_text = "\n\n".join(blocks)
+    return f"""{_RULES}
+
+{jobs_text}
+
+Return a JSON object with key "results" containing exactly {len(jobs)} objects in order:
+{{"results":[{{"job":1,"score":<1-10>,"reason":"<one sentence>","internship_friendly":<bool>,"experience_required":"<phrase or not mentioned>"}},...]}}"""
+
+
 # ── Providers ─────────────────────────────────────────────────────────────────
+
+def _score_via_groq(job, model):
+    from groq import Groq
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not set")
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": _build_single_prompt(job)}],
+        temperature=0.1,
+        response_format={"type": "json_object"},
+    )
+    return json.loads(response.choices[0].message.content)
+
+
+def _score_batch_via_groq(jobs, model):
+    """Batch-score up to 5 jobs in one Groq call. Returns list of result dicts."""
+    from groq import Groq
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not set")
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": _build_batch_prompt_groq(jobs)}],
+        temperature=0.1,
+        response_format={"type": "json_object"},
+    )
+    data = json.loads(response.choices[0].message.content)
+    # Groq returns {"results": [...]} — extract the array
+    results = data.get("results", data) if isinstance(data, dict) else data
+    if not isinstance(results, list) or len(results) != len(jobs):
+        raise ValueError(f"Expected {len(jobs)} results, got {len(results) if isinstance(results, list) else type(results)}")
+    return results
+
 
 def _score_via_gemini(job, model):
     api_key = os.getenv("GEMINI_API_KEY")
@@ -109,7 +163,7 @@ def _score_via_gemini(job, model):
 
 
 def _score_batch_via_gemini(jobs, model):
-    """Score a list of jobs in one API call. Returns list of result dicts."""
+    """Batch-score up to 5 jobs in one Gemini call. Returns list of result dicts."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY not set")
@@ -124,21 +178,6 @@ def _score_batch_via_gemini(jobs, model):
     if not isinstance(results, list) or len(results) != len(jobs):
         raise ValueError(f"Expected {len(jobs)} results, got {len(results) if isinstance(results, list) else type(results)}")
     return results
-
-
-def _score_via_groq(job, model):
-    from groq import Groq
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not set")
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": _build_single_prompt(job)}],
-        temperature=0.1,
-        response_format={"type": "json_object"},
-    )
-    return json.loads(response.choices[0].message.content)
 
 
 def _score_via_ollama(job, model):
@@ -214,60 +253,67 @@ def check_score_cache(title, company, days=7):
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def score_job(job):
-    """Score a single job. Used by description_filler. Falls back Gemini→Groq→Ollama."""
-    global _gemini_failed, _groq_failed
+    """
+    Score a single job. Used by description_filler.
+    Fallback chain: Groq (14,400 req/day) → Gemini (1,500 req/day) → Ollama (local).
+    """
+    global _groq_failed, _gemini_failed
 
     if _resume_text is None:
         load_resume()
 
     config       = _get_config()
     use_ollama   = config["matching"].get("use_ollama", False)
+    groq_model   = config["matching"].get("groq_model",   "llama-3.1-8b-instant")
     gemini_model = config["matching"].get("gemini_model", "gemini-2.5-flash")
-    groq_model   = config["matching"].get("groq_model", "llama-3.1-8b-instant")
     ollama_model = config["matching"].get("ollama_model", "qwen3:8b")
 
     if use_ollama:
         return _score_via_ollama_safe(job, ollama_model)
 
-    if not _gemini_failed:
-        try:
-            return _score_via_gemini(job, gemini_model)
-        except Exception as e:
-            print(f"    Gemini error ({str(e)[:60]}) — trying Groq...")
-            _gemini_failed = True
-
     if not _groq_failed:
         try:
             return _score_via_groq(job, groq_model)
         except Exception as e:
-            print(f"    Groq error ({str(e)[:60]}) — falling back to Ollama...")
+            print(f"    Groq error ({str(e)[:60]}) — trying Gemini...")
             _groq_failed = True
+
+    if not _gemini_failed:
+        try:
+            return _score_via_gemini(job, gemini_model)
+        except Exception as e:
+            print(f"    Gemini error ({str(e)[:60]}) — falling back to Ollama...")
+            _gemini_failed = True
 
     return _score_via_ollama_safe(job, ollama_model)
 
 
 def score_jobs_batch(jobs, batch_size=5):
     """
-    Score a list of jobs using batch API calls (5 per request).
+    Score a list of jobs using batch API calls (5 jobs per request).
     Returns a list of result dicts in the same order as input.
-    Falls back Gemini→Groq→Ollama per batch.
+
+    Fallback chain per batch:
+      1. Groq  — 14,400 req/day free, resets daily  (primary)
+      2. Gemini — 1,500 req/day free, resets daily  (secondary)
+      3. Ollama — local, unlimited                  (last resort)
     """
-    global _gemini_failed, _groq_failed
+    global _groq_failed, _gemini_failed
 
     if _resume_text is None:
         load_resume()
 
     config       = _get_config()
     use_ollama   = config["matching"].get("use_ollama", False)
+    groq_model   = config["matching"].get("groq_model",   "llama-3.1-8b-instant")
     gemini_model = config["matching"].get("gemini_model", "gemini-2.5-flash")
-    groq_model   = config["matching"].get("groq_model", "llama-3.1-8b-instant")
     ollama_model = config["matching"].get("ollama_model", "qwen3:8b")
 
     all_results = []
 
     for i in range(0, len(jobs), batch_size):
-        batch = jobs[i:i + batch_size]
-        batch_num = i // batch_size + 1
+        batch      = jobs[i:i + batch_size]
+        batch_num  = i // batch_size + 1
         total_batches = (len(jobs) + batch_size - 1) // batch_size
         print(f"    Batch {batch_num}/{total_batches} ({len(batch)} jobs)...", end=" ", flush=True)
 
@@ -277,7 +323,21 @@ def score_jobs_batch(jobs, batch_size=5):
             print("Ollama")
             continue
 
-        # Try Gemini batch
+        # ── Primary: Groq (14,400 req/day) ──────────────────────────────────
+        if not _groq_failed:
+            try:
+                results = _score_batch_via_groq(batch, groq_model)
+                all_results.extend(results)
+                print("Groq OK")
+                continue
+            except Exception as e:
+                if _is_quota_error(e):
+                    print(f"Groq quota hit — switching to Gemini...")
+                else:
+                    print(f"Groq error — switching to Gemini...")
+                _groq_failed = True
+
+        # ── Secondary: Gemini (1,500 req/day) ───────────────────────────────
         if not _gemini_failed:
             try:
                 results = _score_batch_via_gemini(batch, gemini_model)
@@ -286,26 +346,12 @@ def score_jobs_batch(jobs, batch_size=5):
                 continue
             except Exception as e:
                 if _is_quota_error(e):
-                    print(f"Gemini quota — switching to Groq...")
+                    print(f"Gemini quota hit — falling back to Ollama...")
                 else:
-                    print(f"Gemini error — switching to Groq...")
+                    print(f"Gemini error — falling back to Ollama...")
                 _gemini_failed = True
 
-        # Try Groq individually (no batch endpoint for Groq)
-        if not _groq_failed:
-            try:
-                for job in batch:
-                    all_results.append(_score_via_groq(job, groq_model))
-                print("Groq OK")
-                continue
-            except Exception as e:
-                if _is_quota_error(e):
-                    print(f"Groq quota — falling back to Ollama...")
-                else:
-                    print(f"Groq error — falling back to Ollama...")
-                _groq_failed = True
-
-        # Ollama fallback
+        # ── Last resort: Ollama (local) ──────────────────────────────────────
         for job in batch:
             all_results.append(_score_via_ollama_safe(job, ollama_model))
         print("Ollama")
